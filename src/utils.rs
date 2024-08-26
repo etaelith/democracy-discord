@@ -124,8 +124,8 @@ pub fn buscar_usuario_por_mensaje(carpeta: &str, deleted_message_id: MessageId) 
         return None;
     }
 
-    for entry in fs::read_dir(folder_path).unwrap() {
-        let entry = entry.unwrap();
+    for entry in fs::read_dir(folder_path).expect("Error al leer la carpeta") {
+        let entry = entry.expect("Error al procesar la entrada");
         let path = entry.path();
 
         if path.is_file() && path.extension().unwrap_or_default() == "txt" {
@@ -137,7 +137,9 @@ pub fn buscar_usuario_por_mensaje(carpeta: &str, deleted_message_id: MessageId) 
 
                             for line in reader.lines() {
                                 if let Ok(line) = line {
-                                    if line.trim() == deleted_message_id.get().to_string() {
+                                    if line
+                                        .starts_with(&format!("id: {}", deleted_message_id.get()))
+                                    {
                                         println!(
                                             "Mensaje con ID {} encontrado en el archivo de usuario {}",
                                             deleted_message_id, user_id
@@ -154,4 +156,44 @@ pub fn buscar_usuario_por_mensaje(carpeta: &str, deleted_message_id: MessageId) 
     }
 
     None
+}
+pub fn delete_line_from_file(folder: &str, file: i64, msg_id: i64) {
+    let exe_dir =
+        std::env::current_exe().expect("No se puede obtener el directorio del ejecutable");
+    let exe_dir = exe_dir
+        .parent()
+        .expect("No se puede obtener el directorio padre");
+
+    let folder_path = exe_dir.join(folder);
+    let file_name = format!("{}.txt", file);
+    let file_path = folder_path.join(&file_name);
+
+    if file_path.exists() {
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&file_path)
+            .expect("No se puede abrir el archivo");
+        let reader = BufReader::new(file);
+
+        let mut lines: Vec<String> = Vec::new();
+        let mut found = false;
+
+        for line in reader.lines() {
+            let line = line.expect("No se pudo leer la línea");
+
+            if line.starts_with(&format!("id: {}", msg_id)) {
+                found = true;
+            } else {
+                lines.push(line);
+            }
+        }
+
+        if found {
+            println!("Eliminando línea con id: {}", msg_id);
+        }
+
+        write_lines_to_file(file_path, &lines);
+    } else {
+        println!("El archivo {} no existe.", file_path.display());
+    }
 }

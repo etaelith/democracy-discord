@@ -7,7 +7,7 @@ use poise::serenity_prelude::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::utils::{buscar_usuario_por_mensaje, folder_logic};
+use crate::utils::{buscar_usuario_por_mensaje, delete_line_from_file, folder_logic};
 
 struct Data {}
 
@@ -19,49 +19,144 @@ pub struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn ready(&self, context: Context, ready: Ready) {
-        let guilds = context.cache.guilds().len();
-        println!("Guilds in the Cache: {}", guilds);
+    async fn ready(&self, _context: Context, ready: Ready) {
         println!("Bot Connected as: {}", ready.user.name)
     }
 
     async fn reaction_add(&self, ctx: Context, reaction: Reaction) {
-        println!("EventHandler: reaction_add triggered");
+        let role_jaula = RoleId::new(1272597370902679604);
+        println!(
+            "EventHandler: reaction_add triggered \n Emoji: {}",
+            reaction.emoji
+        );
+        let desired_reactions = vec![
+            ReactionType::Unicode("❌".to_string()),
+            ReactionType::Unicode("🔑".to_string()),
+        ];
+        if !desired_reactions.contains(&reaction.emoji) {
+            println!("The reaction does not match the desired reactions.\n");
+            return;
+        }
 
-        let message = reaction.message(&ctx).await.unwrap();
-        println!("Mensaje recibido con ID: {}", message.id);
+        let message = match reaction.message(&ctx).await {
+            Ok(message) => message,
+            Err(_) => {
+                println!("Failed to fetch the message.\n");
+                return;
+            }
+        };
 
-        let reaction_info = message
+        let reaction_info = match message
             .reactions
             .iter()
-            .find(|r| r.reaction_type == reaction.emoji);
-
-        if let Some(reaction_info) = reaction_info {
-            let reaction_type_bytes = reaction_info.reaction_type.as_data();
-            let reaction_count = reaction_info.count;
-
-            let desired_reaction = ReactionType::Unicode("❌".to_string());
-            if reaction.emoji == desired_reaction {
-                println!("Desired reaction detected. Attempting to cache the message. \n ");
-                println!(
-                    "msgId: {} , msgText: {} , \n reaction bytes:{}, reaction_count: {} \n ",
-                    message.id, message.content, reaction_type_bytes, reaction_count
-                );
-                folder_logic(
-                    "mi_carpeta",
-                    message.author.id.into(),
-                    message.id.into(),
-                    reaction_count.try_into().unwrap(),
-                    &message.content,
-                );
-            } else {
-                println!("La reaccion no coincide con la deseada.\n \n");
+            .find(|r| r.reaction_type == reaction.emoji)
+        {
+            Some(reaction_info) => reaction_info,
+            None => {
+                println!("The desired reaction was not found in the message.\n");
+                return;
             }
-        } else {
-            println!("No se encontro la reaccion esperada en el mensaje.\n \n");
+        };
+
+        let reaction_count = reaction_info.count;
+
+        if reaction.emoji == ReactionType::Unicode("❌".to_string()) {
+            if let Some(guild_id) = reaction.guild_id {
+                let role_has = match message
+                    .author
+                    .has_role(&ctx.http, guild_id, role_jaula)
+                    .await
+                {
+                    Ok(has_role) => has_role,
+                    Err(_) => {
+                        println!("Failed to check if the user has the role.\n");
+                        return;
+                    }
+                };
+
+                if role_has {
+                    println!("The user is already in the jail.");
+                    return;
+                } else {
+                    folder_logic(
+                        "mi_carpeta",
+                        message.author.id.into(),
+                        message.id.into(),
+                        reaction_count.try_into().unwrap(),
+                        &message.content,
+                    );
+                }
+            }
+            println!(
+                " {} reaction detected. Attempting to save the message in txt. \n",
+                reaction.emoji
+            );
+
+            if reaction_count > 1 {
+                if let Some(guild_id) = reaction.guild_id {
+                    match guild_id.member(&ctx.http, message.author.id).await {
+                        Ok(member) => match member.add_role(&ctx.http, role_jaula).await {
+                            Ok(_) => println!("Successfully added role to member."),
+                            Err(e) => println!("Error adding role: {:?}", e),
+                        },
+                        Err(e) => println!("Failed to fetch member: {:?}", e),
+                    }
+                } else {
+                    println!("Guild ID not available.");
+                }
+            } else if reaction_count > 0 {
+                println!("UserId sum: {}", message.author);
+            }
+        } else if reaction.emoji == ReactionType::Unicode("🔑".to_string()) {
+            println!("This answer: {}", reaction.emoji);
+            if let Some(guild_id) = reaction.guild_id {
+                let role_has = match message
+                    .author
+                    .has_role(&ctx.http, guild_id, role_jaula)
+                    .await
+                {
+                    Ok(has_role) => has_role,
+                    Err(_) => {
+                        println!("Failed to check if the user has the role.\n");
+                        return;
+                    }
+                };
+
+                if role_has {
+                    if reaction_count > 1 {
+                        match guild_id.member(&ctx.http, message.author.id).await {
+                            Ok(member) => {
+                                // Aquí usa `&ctx.http` para agregar el rol
+                                if let Err(e) = member.remove_role(ctx.http, role_jaula).await {
+                                    println!("Error adding role: {:?}", e);
+                                } else {
+                                    println!("Role added successfully.");
+                                }
+                            }
+                            Err(e) => println!("Failed to fetch member: {:?}", e),
+                        }
+                    } else if reaction_count > 0 {
+                        println!("Keep amount: {}", reaction_count)
+                    }
+                    return;
+                } else {
+                    println!("this user is free!")
+                }
+            }
+            println!(
+                " {} reaction detected. Attempting to save the message in txt. \n",
+                reaction.emoji
+            );
+
+            if reaction_count > 2 {
+                println!("UserId: {}", message.author);
+            } else if reaction_count > 0 {
+                println!("UserId sum: {}", message.author);
+            }
         }
     }
-    async fn reaction_remove(&self, _ctx: Context, reaction: Reaction) {
+
+    async fn reaction_remove(&self, ctx: Context, reaction: Reaction) {
         println!("EventHandler: reaction_remove triggered");
         let alert = &reaction.emoji;
         println!("emoji: {}", alert);
@@ -71,6 +166,9 @@ impl EventHandler for Handler {
         let desired_reaction = ReactionType::Unicode("❌".to_string());
         if emoji_trigger == desired_reaction {
             println!("Desired reaction removed. Updating cache. \n ");
+            if let Some(message) = reaction.message(&ctx).await.ok() {
+                delete_line_from_file("mi_carpeta", message.author.id.into(), message.id.into());
+            }
         } else {
             println!("La reaccion no coincide con la deseada.\n \n");
         }
@@ -82,8 +180,9 @@ impl EventHandler for Handler {
         deleted_message_id: MessageId,
         guild_id: Option<GuildId>,
     ) {
+        let role_jaula = RoleId::new(1272597370902679604);
         let _searching = true;
-        let cualquiera = deleted_message_id.clone();
+        let msg_id = deleted_message_id.clone();
 
         if let Some(user_id) = buscar_usuario_por_mensaje("mi_carpeta", deleted_message_id) {
             match guild_id {
@@ -94,10 +193,8 @@ impl EventHandler for Handler {
 
                     match member_result {
                         Ok(member) => {
-                            println!("Roles checking");
                             let name_member = member.clone();
                             println!("Name member: {}", name_member.display_name());
-                            let role_jaula = RoleId::new(1272597370902679604);
                             match roles_result {
                                 Ok(roles) => {
                                     let role_ids: Vec<RoleId> = roles.keys().cloned().collect();
@@ -111,17 +208,19 @@ impl EventHandler for Handler {
                                     if roles_to_remove.is_empty() {
                                         println!("El usuario no tiene roles específicos");
                                         match member.add_role(&http, role_jaula).await {
-                                            Ok(_) => println!("Role agregado"),
-                                            Err(e) => println!("Error al agregar roles: {:?}", e),
+                                            Ok(_) => println!("Role jaula agregado"),
+                                            Err(e) => println!("Error al agregar jaula: {:?}", e),
                                         }
                                     } else {
+                                        match member.remove_roles(&http, &roles_to_remove).await {
+                                            Ok(_) => println!("Roles removidos"),
+                                            Err(e) => println!("Error al remover roles: {:?}", e),
+                                        }
                                         match member.add_role(&http, role_jaula).await {
-                                            Ok(_) => println!("Role agregado"),
-                                            Err(e) => println!("Error al agregar roles: {:?}", e),
+                                            Ok(_) => println!("Role jaula agregado"),
+                                            Err(e) => println!("Error al agregar jaula: {:?}", e),
                                         }
                                     }
-                                    println!("Role IDs: {:?}", role_ids);
-                                    println!("Roles member: {:?}", member_role_ids);
                                 }
                                 Err(e) => println!("Error al obtener roles: {:?}", e),
                             }
@@ -134,7 +233,7 @@ impl EventHandler for Handler {
         } else {
             println!(
                 "No se encontró el mensaje con el ID {} en la carpeta especificada.",
-                cualquiera
+                msg_id
             );
         }
     }
