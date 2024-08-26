@@ -1,6 +1,7 @@
 use handler::Handler;
 use poise::serenity_prelude::{self as serenity, MessageId};
 use serenity::cache::Settings;
+pub mod data_structs;
 mod handler;
 mod utils;
 struct Data {}

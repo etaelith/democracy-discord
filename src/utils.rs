@@ -1,11 +1,21 @@
 use std::{
     fs::{self, OpenOptions},
-    io::{self, BufRead, BufReader, Write},
-    path::PathBuf,
+    io::{self, BufReader, Write},
 };
 
 use poise::serenity_prelude::{MessageId, UserId};
-pub fn folder_logic(folder: &str, file: i64, msg_id: i64, reaction_count: i16, msg: &str) {
+use serde::{Deserialize, Serialize};
+use serde_json;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MsgData {
+    id: u64,
+    reaction: u64,
+    msg: String,
+    jailed: bool,
+}
+
+pub fn folder_logic(folder: &str, file: i64, msg_id: u64, reaction_count: u64, msg: &str) {
     let exe_dir =
         std::env::current_exe().expect("No se puede obtener el directorio del ejecutable");
     let exe_dir = exe_dir
@@ -21,90 +31,135 @@ pub fn folder_logic(folder: &str, file: i64, msg_id: i64, reaction_count: i16, m
         println!("La carpeta {} fue creada", folder_path.display());
     }
 
-    file_logic(folder_path, file, msg_id, reaction_count, msg);
+    file_logic(folder, file, msg_id, reaction_count, msg);
 }
 
-pub fn file_logic(folder: PathBuf, file: i64, msg_id: i64, reaction_count: i16, msg: &str) {
-    let file_name = format!("{}.txt", file);
-    let file_path = folder.join(&file_name);
+pub fn file_logic(folder: &str, file: i64, msg_id: u64, reaction_count: u64, msg: &str) {
+    let exe_dir =
+        std::env::current_exe().expect("No se puede obtener el directorio del ejecutable");
+    let exe_dir = exe_dir
+        .parent()
+        .expect("No se puede obtener el directorio padre");
+
+    let folder_path = exe_dir.join(folder);
+    let file_name = format!("{}.json", file);
+    let file_path = folder_path.join(&file_name);
 
     if file_path.exists() {
         println!("El archivo {} ya existe.", file_path.display());
     } else {
         println!("El archivo {} no existe. Creando...", file_path.display());
-        create_new_file(&file_path, msg_id, reaction_count, msg);
+        create_new_file(folder, file, msg_id, reaction_count, msg);
     }
 
-    update_file(file_path, msg_id, reaction_count, msg);
+    update_file(folder, file, msg_id, reaction_count, msg);
 }
 
-pub fn create_new_file(file_path: &PathBuf, msg_id: i64, reaction_count: i16, msg: &str) {
+pub fn create_new_file(folder: &str, file: i64, msg_id: u64, reaction_count: u64, msg: &str) {
+    let exe_dir =
+        std::env::current_exe().expect("No se puede obtener el directorio del ejecutable");
+    let exe_dir = exe_dir
+        .parent()
+        .expect("No se puede obtener el directorio padre");
+
+    let folder_path = exe_dir.join(folder);
+    let file_name = format!("{}.json", file);
+    let file_path = folder_path.join(&file_name);
+
+    let data = MsgData {
+        id: msg_id,
+        reaction: reaction_count,
+        msg: msg.to_string(),
+        jailed: false,
+    };
+
+    let json_data = serde_json::to_string(&data).expect("Error al serializar datos a JSON");
+
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
-        .open(file_path)
+        .open(&file_path)
         .expect("No se puede abrir o crear el archivo");
 
-    let content = format!(
-        "id: {}, reactions: {}, msg: {}\n",
-        msg_id, reaction_count, msg
-    );
-    file.write_all(content.as_bytes())
+    file.write_all(json_data.as_bytes())
         .expect("No se pudo escribir en el archivo");
 
     println!("Datos escritos en el archivo: {}", file_path.display());
 }
 
-pub fn update_file(file_path: PathBuf, msg_id: i64, reaction_count: i16, msg: &str) {
-    let file = OpenOptions::new()
+pub fn update_file(folder: &str, file: i64, msg_id: u64, reaction_count: u64, msg: &str) {
+    let exe_dir =
+        std::env::current_exe().expect("No se puede obtener el directorio del ejecutable");
+    let exe_dir = exe_dir
+        .parent()
+        .expect("No se puede obtener el directorio padre");
+
+    let folder_path = exe_dir.join(folder);
+    let file_name = format!("{}.json", file);
+    let file_path = folder_path.join(&file_name);
+
+    println!("Buscando el archivo en: {}", file_path.display());
+
+    // Abre el archivo para lectura
+    let file_archive = OpenOptions::new()
         .read(true)
         .open(&file_path)
-        .expect("No se puede abrir el archivo");
-    let reader = BufReader::new(file);
+        .expect("No se puede abrir el archivo para lectura");
 
-    let mut lines: Vec<String> = Vec::new();
+    let reader = BufReader::new(file_archive);
+
+    // Leer los datos JSON existentes en el archivo
+    let mut data: Vec<MsgData> = serde_json::from_reader(reader).unwrap_or_default();
+
     let mut found = false;
 
-    for line in reader.lines() {
-        let line = line.expect("No se pudo leer la línea");
-
-        if line.starts_with(&format!("id: {}", msg_id)) {
+    // Busca el mensaje en el archivo por ID
+    for entry in data.iter_mut() {
+        if entry.id == msg_id {
             found = true;
-            if reaction_count > 0 {
-                lines.push(format!(
-                    "id: {}, reactions: {}, msg: {}",
-                    msg_id, reaction_count, msg
-                ));
-            }
-        } else {
-            lines.push(line);
+            entry.reaction = reaction_count; // Actualizar el contador de reacciones
+            entry.msg = msg.to_string(); // Actualizar el mensaje también si es necesario
         }
     }
 
+    // Si no se encontró el mensaje y reaction_count > 0, añadirlo
     if !found && reaction_count > 0 {
-        lines.push(format!(
-            "id: {}, reactions: {}, msg: {}",
-            msg_id, reaction_count, msg
-        ));
+        data.push(MsgData {
+            id: msg_id,
+            reaction: reaction_count,
+            msg: msg.to_string(),
+            jailed: false,
+        });
+    } else if found && reaction_count == 0 {
+        // Si se encontró el mensaje pero el conteo de reacciones es 0, eliminar la entrada
+        data.retain(|entry| entry.id != msg_id);
     }
 
-    if reaction_count == 0 && found {
-        println!("Eliminando línea con id: {}", msg_id);
-    }
-
-    write_lines_to_file(file_path, &lines);
+    // Escribe los datos actualizados de vuelta al archivo
+    write_data_to_file(folder, file, &data);
 }
 
-pub fn write_lines_to_file(file_path: PathBuf, lines: &[String]) {
+pub fn write_data_to_file(folder: &str, file: i64, data: &[MsgData]) {
+    let exe_dir =
+        std::env::current_exe().expect("No se puede obtener el directorio del ejecutable");
+    let exe_dir = exe_dir
+        .parent()
+        .expect("No se puede obtener el directorio padre");
+
+    let folder_path = exe_dir.join(folder);
+    let file_name = format!("{}.json", file);
+    let file_path = folder_path.join(&file_name);
+
+    let json_data = serde_json::to_string(&data).expect("Error al serializar datos a JSON");
+
     let mut file = OpenOptions::new()
         .write(true)
         .truncate(true)
         .open(&file_path)
         .expect("No se puede abrir el archivo para escribir");
 
-    for line in lines {
-        writeln!(file, "{}", line).expect("No se pudo escribir en el archivo");
-    }
+    file.write_all(json_data.as_bytes())
+        .expect("No se pudo escribir en el archivo");
 
     println!("Archivo actualizado exitosamente: {}", file_path.display());
 }
@@ -128,24 +183,22 @@ pub fn buscar_usuario_por_mensaje(carpeta: &str, deleted_message_id: MessageId) 
         let entry = entry.expect("Error al procesar la entrada");
         let path = entry.path();
 
-        if path.is_file() && path.extension().unwrap_or_default() == "txt" {
+        if path.is_file() && path.extension().unwrap_or_default() == "json" {
             if let Some(file_stem) = path.file_stem() {
                 if let Some(file_stem_str) = file_stem.to_str() {
                     if let Ok(user_id) = file_stem_str.parse::<u64>() {
                         if let Ok(file) = fs::File::open(&path) {
                             let reader = io::BufReader::new(file);
+                            let data: Vec<MsgData> =
+                                serde_json::from_reader(reader).unwrap_or_default();
 
-                            for line in reader.lines() {
-                                if let Ok(line) = line {
-                                    if line
-                                        .starts_with(&format!("id: {}", deleted_message_id.get()))
-                                    {
-                                        println!(
-                                            "Mensaje con ID {} encontrado en el archivo de usuario {}",
-                                            deleted_message_id, user_id
-                                        );
-                                        return Some(UserId::new(user_id));
-                                    }
+                            for entry in data {
+                                if entry.id == deleted_message_id.get() {
+                                    println!(
+                                        "Mensaje con ID {} encontrado en el archivo de usuario {}",
+                                        deleted_message_id, user_id
+                                    );
+                                    return Some(UserId::new(user_id));
                                 }
                             }
                         }
@@ -157,7 +210,8 @@ pub fn buscar_usuario_por_mensaje(carpeta: &str, deleted_message_id: MessageId) 
 
     None
 }
-pub fn delete_line_from_file(folder: &str, file: i64, msg_id: i64) {
+
+pub fn delete_line_from_file(folder: &str, file: i64, msg_id: u64) {
     let exe_dir =
         std::env::current_exe().expect("No se puede obtener el directorio del ejecutable");
     let exe_dir = exe_dir
@@ -165,34 +219,26 @@ pub fn delete_line_from_file(folder: &str, file: i64, msg_id: i64) {
         .expect("No se puede obtener el directorio padre");
 
     let folder_path = exe_dir.join(folder);
-    let file_name = format!("{}.txt", file);
+    let file_name = format!("{}.json", file);
     let file_path = folder_path.join(&file_name);
 
     if file_path.exists() {
-        let file = OpenOptions::new()
+        let file_archive = OpenOptions::new()
             .read(true)
             .open(&file_path)
             .expect("No se puede abrir el archivo");
-        let reader = BufReader::new(file);
+        let reader = BufReader::new(file_archive);
 
-        let mut lines: Vec<String> = Vec::new();
-        let mut found = false;
+        let mut data: Vec<MsgData> = serde_json::from_reader(reader).unwrap_or_default();
+        let initial_len = data.len();
 
-        for line in reader.lines() {
-            let line = line.expect("No se pudo leer la línea");
+        data.retain(|entry| entry.id != msg_id);
 
-            if line.starts_with(&format!("id: {}", msg_id)) {
-                found = true;
-            } else {
-                lines.push(line);
-            }
+        if initial_len != data.len() {
+            println!("Eliminando entrada con id: {}", msg_id);
         }
 
-        if found {
-            println!("Eliminando línea con id: {}", msg_id);
-        }
-
-        write_lines_to_file(file_path, &lines);
+        write_data_to_file(folder, file, &data);
     } else {
         println!("El archivo {} no existe.", file_path.display());
     }

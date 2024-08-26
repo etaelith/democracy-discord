@@ -7,7 +7,7 @@ use poise::serenity_prelude::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::utils::{buscar_usuario_por_mensaje, delete_line_from_file, folder_logic};
+use crate::utils::{buscar_usuario_por_mensaje, delete_line_from_file, folder_logic, update_file};
 
 struct Data {}
 
@@ -29,14 +29,6 @@ impl EventHandler for Handler {
             "EventHandler: reaction_add triggered \n Emoji: {}",
             reaction.emoji
         );
-        let desired_reactions = vec![
-            ReactionType::Unicode("❌".to_string()),
-            ReactionType::Unicode("🔑".to_string()),
-        ];
-        if !desired_reactions.contains(&reaction.emoji) {
-            println!("The reaction does not match the desired reactions.\n");
-            return;
-        }
 
         let message = match reaction.message(&ctx).await {
             Ok(message) => message,
@@ -46,11 +38,10 @@ impl EventHandler for Handler {
             }
         };
 
-        let reaction_info = match message
-            .reactions
-            .iter()
-            .find(|r| r.reaction_type == reaction.emoji)
-        {
+        let reaction_info = match message.reactions.iter().find(|r| {
+            r.reaction_type == ReactionType::Unicode("❌".to_string())
+                || r.reaction_type == ReactionType::Unicode("🔑".to_string())
+        }) {
             Some(reaction_info) => reaction_info,
             None => {
                 println!("The desired reaction was not found in the message.\n");
@@ -59,7 +50,6 @@ impl EventHandler for Handler {
         };
 
         let reaction_count = reaction_info.count;
-
         if reaction.emoji == ReactionType::Unicode("❌".to_string()) {
             if let Some(guild_id) = reaction.guild_id {
                 let role_has = match message
@@ -161,14 +151,51 @@ impl EventHandler for Handler {
         let alert = &reaction.emoji;
         println!("emoji: {}", alert);
 
-        println!("Mensaje recibido con ID: {}", reaction.message_id);
+        println!("Mensaje recibido con ID: {}", &reaction.message_id);
         let emoji_trigger = ReactionType::Unicode(reaction.emoji.to_string());
         let desired_reaction = ReactionType::Unicode("❌".to_string());
-        if emoji_trigger == desired_reaction {
-            println!("Desired reaction removed. Updating cache. \n ");
-            if let Some(message) = reaction.message(&ctx).await.ok() {
-                delete_line_from_file("mi_carpeta", message.author.id.into(), message.id.into());
+        let message = match reaction.message(&ctx).await {
+            Ok(message) => message,
+            Err(_) => {
+                println!("Failed to fetch the message.\n");
+                return;
             }
+        };
+
+        let reaction_info = match message
+            .reactions
+            .iter()
+            .find(|r| r.reaction_type == reaction.emoji)
+        {
+            Some(reaction_info) => reaction_info,
+            None => {
+                println!("The desired reaction was not found in the message.\n");
+                return;
+            }
+        };
+        if emoji_trigger == desired_reaction {
+            println!("Count reactions: {}", &reaction_info.count);
+            if reaction_info.count == 0 {
+                if let Some(message) = reaction.message(&ctx).await.ok() {
+                    delete_line_from_file(
+                        "mi_carpeta",
+                        message.author.id.into(),
+                        message.id.into(),
+                    );
+                }
+            }
+            if reaction_info.count > 0 {
+                if let Some(message) = reaction.message(&ctx).await.ok() {
+                    update_file(
+                        "mi_carpeta".into(),
+                        message.author.id.into(),
+                        message.id.into(),
+                        reaction_info.count,
+                        &message.content,
+                    )
+                }
+            }
+            println!("Desired reaction removed. Updating json. \n ");
         } else {
             println!("La reaccion no coincide con la deseada.\n \n");
         }
