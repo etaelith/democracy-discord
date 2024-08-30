@@ -108,21 +108,18 @@ pub fn update_file(folder: &str, file: i64, msg_id: u64, reaction_count: u64, ms
 
     let reader = BufReader::new(file_archive);
 
-    // Leer los datos JSON existentes en el archivo
     let mut data: Vec<MsgData> = serde_json::from_reader(reader).unwrap_or_default();
 
     let mut found = false;
 
-    // Busca el mensaje en el archivo por ID
     for entry in data.iter_mut() {
         if entry.id == msg_id {
             found = true;
-            entry.reaction = reaction_count; // Actualizar el contador de reacciones
-            entry.msg = msg.to_string(); // Actualizar el mensaje también si es necesario
+            entry.reaction = reaction_count;
+            entry.msg = msg.to_string();
         }
     }
 
-    // Si no se encontró el mensaje y reaction_count > 0, añadirlo
     if !found && reaction_count > 0 {
         data.push(MsgData {
             id: msg_id,
@@ -131,11 +128,9 @@ pub fn update_file(folder: &str, file: i64, msg_id: u64, reaction_count: u64, ms
             jailed: false,
         });
     } else if found && reaction_count == 0 {
-        // Si se encontró el mensaje pero el conteo de reacciones es 0, eliminar la entrada
         data.retain(|entry| entry.id != msg_id);
     }
 
-    // Escribe los datos actualizados de vuelta al archivo
     write_data_to_file(folder, file, &data);
 }
 
